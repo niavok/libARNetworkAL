@@ -48,10 +48,9 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
-#include <sys/select.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
-
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <libARSAL/ARSAL.h>
 
 #include <libARNetworkAL/ARNETWORKAL_Manager.h>
@@ -77,6 +76,28 @@
  *             private header:
  *
  *****************************************/
+
+static void pair(int fds[2])
+{
+    struct sockaddr_in inaddr;
+    struct sockaddr addr;
+    SOCKET lst=socket(AF_INET, SOCK_STREAM,IPPROTO_TCP);
+    memset(&inaddr, 0, sizeof(inaddr));
+    memset(&addr, 0, sizeof(addr));
+    inaddr.sin_family = AF_INET;
+    inaddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    inaddr.sin_port = 0;
+    int yes=1;
+    setsockopt(lst,SOL_SOCKET,SO_REUSEADDR,(char*)&yes,sizeof(yes));
+    bind(lst,(struct sockaddr *)&inaddr,sizeof(inaddr));
+    listen(lst,1);
+    int len=sizeof(inaddr);
+    getsockname(lst, &addr,&len);
+    fds[0]=socket(AF_INET, SOCK_STREAM,0);
+    connect(fds[0],&addr,len);
+    fds[1]=accept(lst,0,0);
+    closesocket(lst);
+}
 
 typedef struct _ARNETWORKAL_WifiNetworkObject_
 {
@@ -456,10 +477,14 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Connect (ARNETWORKAL_Manager_t *manag
         {
             error = ARNETWORKAL_ERROR_WIFI_SOCKET_CREATION;
         }
+#ifdef WIN32
+        pair(wifiSender->fifo);
+#else
         if (pipe(wifiSender->fifo) != 0)
         {
             error = ARNETWORKAL_ERROR_FIFO_INIT;
         }
+#endif
     }
 
     /** Initialize socket */
@@ -482,9 +507,17 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Connect (ARNETWORKAL_Manager_t *manag
         sendSin.sin_family = AF_INET;
         sendSin.sin_port = htons (port);
 
+#ifdef WIN32
+        unsigned long on = 1;
+        if (0 != ioctlsocket(sockfd, FIONBIO, &on))
+        {
+            /* Handle failure. */
+        }
+#else
+
         int flags = fcntl(sockfd, F_GETFL, 0);
         fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
-
+#endif
         connectError = ARSAL_Socket_Connect (sockfd, (struct sockaddr*) &sendSin, sizeof (sendSin));
 
         if (connectError != 0)
@@ -534,10 +567,14 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Bind (ARNETWORKAL_Manager_t *manager,
         {
             error = ARNETWORKAL_ERROR_WIFI_SOCKET_CREATION;
         }
+#ifdef WIN32
+        pair(wifiReceiver->fifo);
+#else
         if (pipe(wifiReceiver->fifo) != 0)
         {
             error = ARNETWORKAL_ERROR_FIFO_INIT;
         }
+#endif
         wifiReceiver->timeoutSec = timeoutSec;
     }
 
@@ -553,9 +590,18 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Bind (ARNETWORKAL_Manager_t *manager,
         timeout.tv_nsec = 0;
         ARSAL_Socket_Setsockopt (wifiReceiver->socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof (timeout));
 
-        /* set the socket non blocking */
-        flags = fcntl(wifiReceiver->socket, F_GETFL, 0);
-        fcntl(wifiReceiver->socket, F_SETFL, flags | O_NONBLOCK);
+        #ifdef WIN32
+                unsigned long on = 1;
+                if (0 != ioctlsocket(wifiReceiver->socket, FIONBIO, &on))
+                {
+                    /* Handle failure. */
+                }
+        #else
+            /* set the socket non blocking */
+            flags = fcntl(wifiReceiver->socket, F_GETFL, 0);
+            fcntl(wifiReceiver->socket, F_SETFL, flags | O_NONBLOCK);
+        #endif
+
 
         errorBind = ARSAL_Socket_Bind (wifiReceiver->socket, (struct sockaddr*)&recvSin, sizeof (recvSin));
 
@@ -1109,6 +1155,9 @@ static int ARNETWORKAL_WifiNetwork_GetAvailableSendSize (ARNETWORKAL_Manager_t *
         return -1;
     }
 
+#ifdef WIN32
+    return -1;
+#else
     err = ioctl(sockfd, TIOCOUTQ, &currentBytesInSocket);
     if (err >= 0)
     {
@@ -1132,4 +1181,5 @@ static int ARNETWORKAL_WifiNetwork_GetAvailableSendSize (ARNETWORKAL_Manager_t *
     }
 
     return available;
+#endif
 }
