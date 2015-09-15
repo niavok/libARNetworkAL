@@ -607,6 +607,9 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Bind (ARNETWORKAL_Manager_t *manager,
 
         if (errorBind !=0)
         {
+#ifdef WIN32
+            ARSAL_PRINT(ARSAL_PRINT_ERROR, ARNETWORKAL_WIFINETWORK_TAG, "[%p] bind fd=%d, addr='0.0.0.0', port=%d: error='%d'", manager, wifiReceiver->socket, port, WSAGetLastError());
+#else
             switch (errno)
             {
             case EACCES:
@@ -618,6 +621,7 @@ eARNETWORKAL_ERROR ARNETWORKAL_WifiNetwork_Bind (ARNETWORKAL_Manager_t *manager,
                 error = ARNETWORKAL_ERROR_WIFI;
                 break;
             }
+#endif
         }
     }
 
